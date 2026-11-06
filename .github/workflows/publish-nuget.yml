@@ -1,0 +1,58 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (optional, e.g. 1.0.0)'
+        required: false
+        type: string
+      nuget_user:
+        description: 'NuGet.org username or organization (optional, defaults to Jonas_1ara)'
+        required: false
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore src/73/73.csproj
+
+      - name: Build
+        run: dotnet build src/73/73.csproj --configuration Release --no-restore
+
+      - name: Pack NuGet package
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            dotnet pack src/73/73.csproj --configuration Release --no-build --output nupkg -p:PackageVersion=${{ github.event.inputs.version }}
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            dotnet pack src/73/73.csproj --configuration Release --no-build --output nupkg -p:PackageVersion=$VERSION
+          else
+            dotnet pack src/73/73.csproj --configuration Release --no-build --output nupkg
+          fi
+
+      - name: NuGet login (OIDC)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ inputs.nuget_user || vars.NUGET_USERNAME || 'Jonas_1ara' }}
+
+      - name: Push to NuGet.org
+        run: dotnet nuget push nupkg/*.nupkg --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
